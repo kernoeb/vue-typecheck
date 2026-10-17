@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "lib": ["esnext"],
+    "types": ["bun"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    // @vue/language-core is typed against `import('typescript')` — the TypeScript 6 JS API it is given
+    // at runtime. TypeScript 7 (installed as `typescript` for `--checker tsc`) ships no JS API.
+    "paths": {
+      "typescript": ["./node_modules/@typescript/typescript6"]
+    }
+  },
+  "include": ["src", "test"],
+  "exclude": ["test/fixtures"]
+}
