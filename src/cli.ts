@@ -65,8 +65,12 @@ async function main(argv: string[]): Promise<number> {
   if (positionals[0] === 'compare') {
     const result = await compare({ project: values.project, cwd })
     for (const [source, problem] of result.unparseable) console.log(formatUnparseable(source, problem, cwd))
-    for (const [name, run] of [['tsc', result.tsc], ['bun check', result.bun]] as const) {
-      console.log(`${name}: ${run.diagnostics.length} errors, ${run.ms.toFixed(0)} ms${run.incomplete ? ` — ${run.incomplete}` : ''}`)
+    for (const [name, kind] of [['tsc', 'tsc'], ['bun check', 'bun']] as const) {
+      const run = result[kind]
+      const glue = run.diagnostics.length - result.reported[kind]
+      console.log(
+        `${name}: ${result.reported[kind]} errors${glue > 0 ? ` (+${glue} in generated glue code)` : ''}, ${run.ms.toFixed(0)} ms${run.incomplete ? ` — ${run.incomplete}` : ''}`,
+      )
     }
     for (const [name, list] of [['only tsc', result.onlyTsc], ['only bun check', result.onlyBun]] as const) {
       if (list.length === 0) continue

@@ -19,8 +19,8 @@ On a Nuxt app with 219 SFCs and ~1,900 files:
 | | errors | time |
 |---|---|---|
 | `vue-tsc` 3.3.13 on TypeScript 6 (Node) | reference | 18–19 s |
-| `vue-typecheck` (`tsc` 7.0.2) | identical to `vue-tsc`: codes, messages, lines, columns | 6.5 s |
-| `vue-typecheck --checker bun` (Bun 1.4.3) | identical, plus false TS2589 (see below) | 3.1–3.5 s |
+| `vue-typecheck` (`tsc` 7.0.2) | identical to `vue-tsc`: codes, messages, lines, columns | 5.7–6.0 s |
+| `vue-typecheck --checker bun` (Bun 1.4.3) | identical to `tsc` 7 on this app (see below for where it is not) | 1.9–2.0 s |
 
 Only changed SFCs are regenerated; a warm run spends a few milliseconds on codegen.
 
@@ -66,19 +66,23 @@ The same is available as an API: `check({ project, checker })` and `compare({ pr
   containing `//`, such as `href="https://vuejs.org"`, generates TypeScript that does not parse.
   `vue-tsc` hides it (the syntax error is in an unmapped region); here the SFC is reported. Until it is
   fixed upstream, move such values into `<script>`.
-- Positions: checkers print where an error starts, not its length. At a token start, a zero-length
-  boundary mapping and the token's own mapping both match; the token wins, which matched `vue-tsc` on
-  every case in the tests.
+- Positions: checkers print where an error starts, not its length (a span in `bun check` output is
+  requested in [oven-sh/bun#45708](https://github.com/oven-sh/bun/issues/45708)). At a token start, a
+  zero-length boundary mapping and the token's own mapping both match; the token wins, which matched
+  `vue-tsc` on every case in the tests.
 - Not supported yet: project references (`-b`), SFCs outside the directory of the nearest
   `package.json` above the tsconfig.
 
 ## `bun check` vs `tsc`
 
-`compare` runs both checkers on the same generated files, so any difference is the checkers'. Known
-differences on Bun 1.4.3:
+`compare` runs both checkers on the same generated files, so any difference is the checkers'. It prints
+the errors each one reports and lists the raw diagnostics (positions in the generated files) that only
+one of them found. Known differences on Bun 1.4.3:
 
-- false TS2589 on typed `$fetch` calls in large programs
-  ([oven-sh/bun#45691](https://github.com/oven-sh/bun/issues/45691)).
+- false TS2589 on heavy generic types such as nitropack's typed `$fetch` (`InternalApi`); which calls
+  fail depends on the checking order
+  ([oven-sh/bun#45691](https://github.com/oven-sh/bun/issues/45691)). Nuxt 4.6 route types
+  (`experimental.routeTypedFetch`) do not trigger it.
 
 ## License
 

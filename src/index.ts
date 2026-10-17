@@ -39,7 +39,9 @@ export interface CheckResult {
 export interface CompareResult {
   tsc: CheckerRun
   bun: CheckerRun
-  /** Raw diagnostics (positions in the generated workspace) only one of the checkers reported. */
+  /** Errors each checker reports in a normal run: its diagnostics mapped into the user's files. */
+  reported: Record<CheckerKind, number>
+  /** Raw diagnostics (positions in the generated workspace, glue code included) only one of the checkers reported. */
   onlyTsc: RawDiagnostic[]
   onlyBun: RawDiagnostic[]
   unparseable: Map<string, SyntaxProblem>
@@ -103,7 +105,7 @@ function key(diagnostic: RawDiagnostic): string {
  * parsing are shared, so any difference comes from the checkers themselves.
  */
 export async function compare(options: Omit<CheckOptions, 'checker'>): Promise<CompareResult> {
-  const { project, workspace, cwd } = await prepare(options)
+  const { project, generate, workspace, cwd } = await prepare(options)
   const tsc = await runChecker('tsc', workspace.configPath, project.root, cwd)
   const bun = await runChecker('bun', workspace.configPath, project.root, cwd)
   const tscKeys = new Set(tsc.diagnostics.map(key))
@@ -111,6 +113,10 @@ export async function compare(options: Omit<CheckOptions, 'checker'>): Promise<C
   return {
     tsc,
     bun,
+    reported: {
+      tsc: mapDiagnostics(tsc.diagnostics, workspace, generate).diagnostics.length,
+      bun: mapDiagnostics(bun.diagnostics, workspace, generate).diagnostics.length,
+    },
     onlyTsc: tsc.diagnostics.filter((diagnostic) => !bunKeys.has(key(diagnostic))),
     onlyBun: bun.diagnostics.filter((diagnostic) => !tscKeys.has(key(diagnostic))),
     unparseable: await unparseableAfterCheck([...tsc.diagnostics, ...bun.diagnostics], workspace),
