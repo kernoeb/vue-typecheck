@@ -40,15 +40,17 @@ interface Manifest {
   files: Record<string, ManifestEntry>
 }
 
+/** Options that make a checker print lines that are not diagnostics, which fails the run (see checkerProblem). */
+const QUIET = { listFiles: false, explainFiles: false, traceResolution: false, diagnostics: false, extendedDiagnostics: false, listEmittedFiles: false }
+
 /** What importers of an unparseable SFC see: a component that accepts anything. */
 const STUB = `import type { DefineComponent } from 'vue'\n\ndeclare const component: DefineComponent<Record<string, unknown>>\nexport default component\n`
 
 const languageCoreRoot = dirname(Bun.resolveSync('@vue/language-core/package.json', import.meta.dir))
 const languageCoreVersion = await readVersion(join(languageCoreRoot, 'package.json'))
-/** Changes with the tool's code, also between git commits that keep the same version. */
-const toolHash = Bun.hash(
-  (await Promise.all([...new Bun.Glob('*.ts').scanSync(import.meta.dir)].toSorted().map((file) => Bun.file(join(import.meta.dir, file)).text()))).join('\0'),
-).toString(36)
+const toolFiles = [...[...new Bun.Glob('*.ts').scanSync(import.meta.dir)].toSorted().map((file) => join(import.meta.dir, file)), join(import.meta.dir, '..', 'package.json')]
+/** Changes with the tool's code and its dependencies, also between commits that keep the same version. */
+const toolHash = Bun.hash((await Promise.all(toolFiles.map((file) => Bun.file(file).text()))).join('\0')).toString(36)
 
 /**
  * Ends every generated file: a cache hit needs the manifest's hash AND the file's own, so a run
@@ -235,7 +237,7 @@ export async function prepareWorkspace(project: Project, generate: Generate): Pr
     JSON.stringify(
       {
         extends: project.configPath,
-        compilerOptions: { rootDirs, paths },
+        compilerOptions: { ...QUIET, rootDirs, paths },
         files: [...project.fileNames.filter((file) => !isVue(file) && !file.endsWith('.vue')), ...Object.keys(manifest.files)],
         include: [],
       },

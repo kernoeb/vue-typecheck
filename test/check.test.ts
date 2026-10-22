@@ -106,6 +106,24 @@ describe('syntax errors', () => {
   })
 })
 
+describe('tsconfig options that print more than diagnostics', () => {
+  test('do not fail the run', async () => {
+    const copy = join(repoRoot, '.tmp', `listing-${crypto.randomUUID()}`)
+    await mkdir(copy, { recursive: true })
+    await cp(fixture, copy, { recursive: true, filter: (path) => !path.includes('node_modules') })
+    const config = join(copy, 'tsconfig.json')
+    const tsconfig = await Bun.file(config).json()
+    const baseline = await check({ project: config, checker: 'tsc', cwd: copy })
+    tsconfig.compilerOptions = { ...tsconfig.compilerOptions, listFiles: true, extendedDiagnostics: true, explainFiles: true }
+    await Bun.write(config, JSON.stringify(tsconfig))
+    for (const checker of ['tsc', 'bun'] as const) {
+      const result = await check({ project: config, checker, cwd: copy })
+      expect(keys(result.diagnostics, copy)).toEqual(keys(baseline.diagnostics, copy))
+    }
+    await rm(copy, { recursive: true, force: true })
+  })
+})
+
 describe('cache', () => {
   const copy = join(repoRoot, '.tmp', `cache-${crypto.randomUUID()}`)
   afterAll(() => rm(copy, { recursive: true, force: true }))

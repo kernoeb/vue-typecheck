@@ -67,6 +67,13 @@ function isEmpty(mapping: Mapping<CodeInformation>): boolean {
   return mapping.lengths.every((length) => length === 0)
 }
 
+/** Where a diagnostic at this offset of the script starts in the .vue, if it is reported at all. */
+function toSourceOffset(script: GeneratedScript, offset: number, code: number): number | undefined {
+  const located = [...script.map.toSourceLocation(offset)]
+  const tokens = located.filter(([, mapping]) => !isEmpty(mapping))
+  return (tokens.length > 0 ? tokens : located).find(([, mapping]) => shouldReport(mapping.data, code))?.[0]
+}
+
 /**
  * Checkers print where a diagnostic starts, not how long it is, so Volar's range lookup (what vue-tsc
  * uses) is not available. At the start of a token a zero-length boundary marker (the `:` of `:size`)
@@ -93,9 +100,7 @@ export function mapDiagnostics(raw: RawDiagnostic[], workspace: Workspace, gener
     }
     const script = generated.get(diagnostic.file)
     const offset = script && script.starts[diagnostic.line - 1]! + diagnostic.column - 1
-    const located = script && offset !== undefined ? [...script.map.toSourceLocation(offset)] : []
-    const tokens = located.filter(([, mapping]) => !isEmpty(mapping))
-    const [sourceOffset] = (tokens.length > 0 ? tokens : located).find(([, mapping]) => shouldReport(mapping.data, diagnostic.code)) ?? []
+    const sourceOffset = script && offset !== undefined ? toSourceOffset(script, offset, diagnostic.code) : undefined
     if (sourceOffset === undefined) {
       dropped.push(diagnostic)
       continue
@@ -105,12 +110,6 @@ export function mapDiagnostics(raw: RawDiagnostic[], workspace: Workspace, gener
     diagnostics.push({ ...diagnostic, file: source, line, column })
   }
   return { diagnostics, dropped }
-}
-
-/** Where a syntax error starts in the .vue, by the same rule as mapDiagnostics. */
-function syntaxErrorSource(script: GeneratedScript, offset: number, code: number): number | undefined {
-  const candidates = [...script.map.toSourceLocation(offset, (data) => shouldReport(data, code))]
-  return (candidates.find(([, mapping]) => !isEmpty(mapping)) ?? candidates[0])?.[0]
 }
 
 /**
@@ -134,7 +133,7 @@ export function mapSyntaxErrors(
   for (const [file, [source, script]] of scripts) {
     const starts = sourceLineStarts(workspace.sources.get(source)!)
     for (const error of errors.get(file) ?? []) {
-      const sourceOffset = syntaxErrorSource(script, error.start, error.code)
+      const sourceOffset = toSourceOffset(script, error.start, error.code)
       if (sourceOffset === undefined) continue
       const [line, column] = toLineColumn(starts, sourceOffset)
       diagnostics.push({ file: source, line, column, code: error.code, message: error.message })
