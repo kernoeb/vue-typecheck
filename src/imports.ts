@@ -5,7 +5,10 @@ import ts from '@typescript/typescript6'
 import type { Project } from './project'
 
 export interface ImportResolver {
-  /** Specifiers a file imports that may resolve into the project: relative, `#` imports and `paths` aliases. */
+  /**
+   * Specifiers a file imports that may resolve into the project: relative, `#` imports and `paths` aliases.
+   * TypeScript never resolves a `#` import to an SFC: SFCs behind one are reached through the .ts it leads to.
+   */
   specifiers(text: string): string[]
   /**
    * Files the specifiers resolve to, as the checker resolves them, under the project root and outside
