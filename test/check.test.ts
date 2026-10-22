@@ -78,6 +78,29 @@ describe('SFCs outside the tsconfig include', () => {
   })
 })
 
+describe('syntax errors', () => {
+  const root = join(import.meta.dir, 'fixtures', 'syntax-errors')
+
+  test('one in the user\'s code is an error at its .vue position, one in generated code is a codegen bug', async () => {
+    for (const checker of ['tsc', 'bun'] as const) {
+      const result = await check({ project: join(root, 'tsconfig.json'), checker, cwd: root })
+      expect(keys(result.diagnostics, root)).toEqual([
+        'src/ScriptSyntax.vue(3,1) TS1109: Expression expected.',
+        'src/TemplateSyntax.vue(6,17) TS1003: Identifier expected.',
+      ])
+      expect([...result.unparseable.keys()].map((file) => relative(root, file))).toEqual(['src/SlashSlash.vue'])
+    }
+  })
+
+  // vue-tsc reports the <script> one alone: it maps diagnostics by range, and `{{ count + }}` ends unmapped.
+  test.skipIf(!node)('reports the <script> one where vue-tsc reports it', async () => {
+    const expected = vueTsc(root)
+    expect(keys(expected, root)).toEqual(['src/ScriptSyntax.vue(3,1) TS1109: Expression expected.'])
+    const result = await check({ project: join(root, 'tsconfig.json'), checker: 'tsc', cwd: root })
+    expect(keys(result.diagnostics, root)).toEqual(expect.arrayContaining(keys(expected, root)))
+  })
+})
+
 describe('cache', () => {
   const copy = join(repoRoot, '.tmp', `cache-${crypto.randomUUID()}`)
   afterAll(() => rm(copy, { recursive: true, force: true }))

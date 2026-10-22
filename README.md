@@ -61,7 +61,9 @@ The same is available as an API: `check({ project, checker })` and `compare({ pr
 - **No silent passes.** Neither `tsc` nor `bun check` type-checks a program in which any file has a
   syntax error (`tsc` says nothing about it, `bun check` prints "Stopped before type checking"). Every
   generated script is parsed first; one that does not parse is replaced by a stub, the rest of the
-  project is checked, and the SFC is reported as **not type-checked** (exit 1).
+  project is checked, and the SFC is reported as **not type-checked** (exit 1). A syntax error that maps
+  back to the .vue is in your code (`const a = 1 +`): it is reported there as an error, as `vue-tsc`
+  does, and only the others are reported as codegen bugs.
 - **Known codegen bug:** since `@vue/language-core` 3.3.12
   ([vuejs/language-tools#6230](https://github.com/vuejs/language-tools/pull/6230)) a prop value
   containing `//`, such as `href="https://vuejs.org"`, generates TypeScript that does not parse.

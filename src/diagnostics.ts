@@ -2,6 +2,7 @@ import type { CodeInformation, Mapping } from '@vue/language-core'
 
 import type { RawDiagnostic } from './checkers'
 import type { Generate, GeneratedScript } from './codegen'
+import { findSyntaxErrors, type SyntaxProblem } from './syntax'
 import type { Workspace } from './workspace'
 
 /** A diagnostic in the user's own files: SFC positions are in the .vue, 1-based like tsc's. */
@@ -102,4 +103,41 @@ export function mapDiagnostics(raw: RawDiagnostic[], workspace: Workspace, gener
     diagnostics.push({ ...diagnostic, file: source, line, column })
   }
   return { diagnostics, dropped }
+}
+
+/** Where a syntax error starts in the .vue, by the same rule as mapDiagnostics. */
+function syntaxErrorSource(script: GeneratedScript, offset: number, code: number): number | undefined {
+  const candidates = [...script.map.toSourceLocation(offset, (data) => shouldReport(data, code))]
+  return (candidates.find(([, mapping]) => !isEmpty(mapping)) ?? candidates[0])?.[0]
+}
+
+/**
+ * Syntax errors of SFCs whose generated script does not parse, mapped like type errors. One that maps
+ * is in the user's code (`const a = 1 +`) and is reported at its .vue position; an SFC none of whose
+ * errors map stays unparseable: the error is in code that @vue/language-core generated.
+ */
+export function mapSyntaxErrors(
+  unparseable: Map<string, SyntaxProblem>,
+  workspace: Workspace,
+  generate: Generate,
+): { diagnostics: Diagnostic[]; unparseable: Map<string, SyntaxProblem> } {
+  const scripts = new Map<string, [source: string, script: GeneratedScript]>()
+  for (const source of unparseable.keys()) {
+    const script = generate(source, workspace.sources.get(source)!)
+    if (script) scripts.set(source + script.extension, [source, script])
+  }
+  const errors = findSyntaxErrors(new Map([...scripts].map(([file, [, script]]) => [file, script.text])))
+  const diagnostics: Diagnostic[] = []
+  const remaining = new Map(unparseable)
+  for (const [file, [source, script]] of scripts) {
+    const starts = sourceLineStarts(workspace.sources.get(source)!)
+    for (const error of errors.get(file) ?? []) {
+      const sourceOffset = syntaxErrorSource(script, error.start, error.code)
+      if (sourceOffset === undefined) continue
+      const [line, column] = toLineColumn(starts, sourceOffset)
+      diagnostics.push({ file: source, line, column, code: error.code, message: error.message })
+      remaining.delete(source)
+    }
+  }
+  return { diagnostics, unparseable: remaining }
 }
