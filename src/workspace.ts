@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 
 import type { Generate, GeneratedScript } from './codegen'
@@ -46,6 +46,28 @@ const STUB = `import type { DefineComponent } from 'vue'\n\ndeclare const compon
 const languageCoreRoot = dirname(Bun.resolveSync('@vue/language-core/package.json', import.meta.dir))
 const languageCoreVersion = await readVersion(join(languageCoreRoot, 'package.json'))
 const toolVersion = await readVersion(join(import.meta.dir, '..', 'package.json'))
+
+/**
+ * Ends every generated file: a cache hit needs the manifest's hash AND the file's own, so a run
+ * killed between writing scripts and writing the manifest cannot leave a script for another text.
+ */
+function marker(hash: string): string {
+  return `\n// vue-typecheck ${hash}\n`
+}
+
+async function hasMarker(path: string, hash: string): Promise<boolean> {
+  const file = Bun.file(path)
+  const expected = marker(hash)
+  const size = (await file.exists()) ? file.size : 0
+  return size >= expected.length && (await file.slice(size - expected.length).text()) === expected
+}
+
+/** Overlapping runs never see a half-written file. */
+async function writeAtomic(path: string, text: string): Promise<void> {
+  const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`
+  await writeFile(temporary, text)
+  await rename(temporary, path)
+}
 
 function isUnder(path: string, dir: string): boolean {
   return path === dir || path.startsWith(dir + sep)
@@ -131,7 +153,7 @@ export async function prepareWorkspace(project: Project, generate: Generate): Pr
     sources.set(source, text)
     const hash = Bun.hash(text).toString(36)
     const cached = cachedBySource.get(source)
-    if (cached?.hash === hash && cached.imports && (await Bun.file(cached.target).exists())) {
+    if (cached?.hash === hash && cached.imports && (await hasMarker(cached.target, hash))) {
       const { target, ...entry } = cached
       manifest.files[target] = entry
       return [source, cached.imports]
@@ -175,11 +197,11 @@ export async function prepareWorkspace(project: Project, generate: Generate): Pr
       const problem = problems.get(target)
       if (problem) {
         await rm(target, { force: true })
-        await writeFile(stub, STUB)
+        await writeAtomic(stub, STUB + marker(hash))
         manifest.files[stub] = { source, hash, problem, imports }
       } else {
         await rm(stub, { force: true })
-        await writeFile(target, script.text)
+        await writeAtomic(target, script.text + marker(hash))
         manifest.files[target] = { source, hash, imports }
       }
     }),
@@ -194,7 +216,7 @@ export async function prepareWorkspace(project: Project, generate: Generate): Pr
   if (!(await Bun.file(join(typesDir, 'package.json')).exists())) {
     await mkdir(typesDir, { recursive: true })
     await cp(join(languageCoreRoot, 'types'), typesDir, { recursive: true })
-    await writeFile(join(typesDir, 'package.json'), JSON.stringify({ name: TYPES_PACKAGE, private: true }))
+    await writeAtomic(join(typesDir, 'package.json'), JSON.stringify({ name: TYPES_PACKAGE, private: true }))
   }
 
   const paths: Record<string, string[]> = {}
@@ -205,7 +227,7 @@ export async function prepareWorkspace(project: Project, generate: Generate): Pr
   const rootDirs = [...new Set([...baseRootDirs, project.root, ...baseRootDirs.filter(mirrorable).map(mirror), cacheDir])]
   const configPath = join(cacheDir, 'tsconfig.json')
   await mkdir(cacheDir, { recursive: true })
-  await writeFile(
+  await writeAtomic(
     configPath,
     JSON.stringify(
       {
@@ -218,7 +240,7 @@ export async function prepareWorkspace(project: Project, generate: Generate): Pr
       2,
     ),
   )
-  await writeFile(manifestPath, JSON.stringify(manifest))
+  await writeAtomic(manifestPath, JSON.stringify(manifest))
 
   const entries = Object.entries(manifest.files)
   return {

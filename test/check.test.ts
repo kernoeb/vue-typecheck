@@ -106,4 +106,27 @@ describe('cache', () => {
     await check({ project, cwd: copy })
     expect(await Array.fromAsync(scripts.scan(cacheRoot))).toHaveLength(0)
   })
+
+  test('a run killed before writing its manifest leaves no script that a later run reuses', async () => {
+    const stale = join(repoRoot, '.tmp', `cache-${crypto.randomUUID()}`)
+    await mkdir(stale, { recursive: true })
+    await cp(fixture, stale, { recursive: true, filter: (path) => !path.includes('node_modules') })
+    const project = join(stale, 'tsconfig.json')
+    await check({ project, cwd: stale })
+    const [manifest] = await Array.fromAsync(new Bun.Glob('**/manifest.json').scan({ cwd: join(stale, 'node_modules', '.cache'), absolute: true }))
+    const before = await Bun.file(manifest!).text()
+
+    const clean = join(stale, 'src', 'components', 'Clean.vue')
+    const text = await Bun.file(clean).text()
+    await Bun.write(clean, text.replace('count.value * 2', 'count.value.toUpperCase()'))
+    await check({ project, cwd: stale })
+    // The new script is on disk, the manifest is the one from before: as if the run was killed between the two.
+    await Bun.write(manifest!, before)
+    await Bun.write(clean, text)
+
+    const result = await check({ project, cwd: stale })
+    expect(keys(result.diagnostics, stale).filter((key) => key.startsWith('src/components/Clean.vue'))).toEqual([])
+    expect(result.regenerated).toBe(1)
+    await rm(stale, { recursive: true, force: true })
+  })
 })
