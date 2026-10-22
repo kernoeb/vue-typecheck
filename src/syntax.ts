@@ -51,12 +51,13 @@ export function findSyntaxProblems(scripts: Map<string, string>): Map<string, Sy
   for (const [sourceFile, [first]] of parse(scripts)) {
     if (!first) continue
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(first.start)
+    const starts = sourceFile.getLineStarts()
     problems.set(sourceFile.fileName, {
       line: line + 1,
       column: character + 1,
       code: first.code,
       message: ts.flattenDiagnosticMessageText(first.messageText, '\n'),
-      text: sourceFile.text.split('\n')[line] ?? '',
+      text: sourceFile.text.slice(starts[line], starts[line + 1]),
     })
   }
   return problems
