@@ -45,7 +45,10 @@ const STUB = `import type { DefineComponent } from 'vue'\n\ndeclare const compon
 
 const languageCoreRoot = dirname(Bun.resolveSync('@vue/language-core/package.json', import.meta.dir))
 const languageCoreVersion = await readVersion(join(languageCoreRoot, 'package.json'))
-const toolVersion = await readVersion(join(import.meta.dir, '..', 'package.json'))
+/** Changes with the tool's code, also between git commits that keep the same version. */
+const toolHash = Bun.hash(
+  (await Promise.all([...new Bun.Glob('*.ts').scanSync(import.meta.dir)].toSorted().map((file) => Bun.file(join(import.meta.dir, file)).text()))).join('\0'),
+).toString(36)
 
 /**
  * Ends every generated file: a cache hit needs the manifest's hash AND the file's own, so a run
@@ -130,7 +133,7 @@ export async function prepareWorkspace(project: Project, generate: Generate): Pr
   const cacheDir = join(project.root, 'node_modules', '.cache', 'vue-typecheck', Bun.hash(project.configPath).toString(36))
   const mirror = (path: string) => join(cacheDir, relative(project.root, path))
   const key = Bun.hash(
-    JSON.stringify([toolVersion, languageCoreVersion, project.root, project.paths, project.vueOptions], (_, value: unknown) =>
+    JSON.stringify([toolHash, languageCoreVersion, project.root, project.paths, project.vueOptions], (_, value: unknown) =>
       typeof value === 'function' ? pluginName(value) : value,
     ),
   ).toString(36)

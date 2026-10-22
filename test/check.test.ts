@@ -107,6 +107,27 @@ describe('cache', () => {
     expect(await Array.fromAsync(scripts.scan(cacheRoot))).toHaveLength(0)
   })
 
+  test('a change to the tool regenerates every SFC', async () => {
+    const tools = join(repoRoot, '.tmp', `tool-${crypto.randomUUID()}`)
+    for (const name of ['a', 'b']) await cp(join(repoRoot, 'src'), join(tools, name, 'src'), { recursive: true })
+    for (const name of ['a', 'b']) await cp(join(repoRoot, 'package.json'), join(tools, name, 'package.json'))
+    const codegen = join(tools, 'b', 'src', 'codegen.ts')
+    await Bun.write(codegen, (await Bun.file(codegen).text()) + '\n// changed\n')
+    const changed = join(repoRoot, '.tmp', `cache-${crypto.randomUUID()}`)
+    await mkdir(changed, { recursive: true })
+    await cp(fixture, changed, { recursive: true, filter: (path) => !path.includes('node_modules') })
+    const project = join(changed, 'tsconfig.json')
+
+    const a: typeof import('../src/index') = await import(join(tools, 'a', 'src', 'index.ts'))
+    const b: typeof import('../src/index') = await import(join(tools, 'b', 'src', 'index.ts'))
+    await a.check({ project, cwd: changed })
+    expect((await a.check({ project, cwd: changed })).regenerated).toBe(0)
+    const after = await b.check({ project, cwd: changed })
+    expect(after.regenerated).toBe(after.sfcs)
+    await rm(tools, { recursive: true, force: true })
+    await rm(changed, { recursive: true, force: true })
+  })
+
   test('a run killed before writing its manifest leaves no script that a later run reuses', async () => {
     const stale = join(repoRoot, '.tmp', `cache-${crypto.randomUUID()}`)
     await mkdir(stale, { recursive: true })
