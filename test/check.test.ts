@@ -15,12 +15,16 @@ function keys(diagnostics: Diagnostic[], root: string): string[] {
     .toSorted()
 }
 
+function vueTsc(root: string): Diagnostic[] {
+  const reference = Bun.spawnSync([node!, join(import.meta.dir, 'vue-tsc-reference.cjs'), '--noEmit', '--pretty', 'false', '-p', join(root, 'tsconfig.json')], {
+    cwd: root,
+  })
+  return parseCheckerOutput(reference.stdout.toString(), root)
+}
+
 describe('check on the basic fixture', () => {
   test.skipIf(!node)('reports exactly what vue-tsc reports', async () => {
-    const reference = Bun.spawnSync([node!, join(import.meta.dir, 'vue-tsc-reference.cjs'), '--noEmit', '--pretty', 'false', '-p', join(fixture, 'tsconfig.json')], {
-      cwd: fixture,
-    })
-    const expected = parseCheckerOutput(reference.stdout.toString(), fixture)
+    const expected = vueTsc(fixture)
     expect(expected.length).toBeGreaterThan(0)
 
     const result = await check({ project: join(fixture, 'tsconfig.json'), checker: 'tsc', cwd: fixture })
@@ -39,6 +43,20 @@ describe('check on the basic fixture', () => {
     expect([...result.unparseable.keys()].map((file) => relative(fixture, file))).toEqual(['src/components/SlashSlash.vue'])
     // Without the stub, tsc would report the syntax error alone and type-check nothing.
     expect(keys(result.diagnostics, fixture)).toContain("src/format.ts(5,14) TS2322: Type 'number' is not assignable to type 'string'.")
+  })
+})
+
+describe('line breaks other than \\n', () => {
+  const root = join(import.meta.dir, 'fixtures', 'line-breaks')
+
+  // U+2028, U+2029, a lone \r and \r\n, each before an error in <script> and in <template>.
+  test.skipIf(!node)('errors after them are reported where vue-tsc reports them', async () => {
+    const expected = vueTsc(root)
+    expect(expected).toHaveLength(8)
+    for (const checker of ['tsc', 'bun'] as const) {
+      const result = await check({ project: join(root, 'tsconfig.json'), checker, cwd: root })
+      expect(keys(result.diagnostics, root)).toEqual(keys(expected, root))
+    }
   })
 })
 

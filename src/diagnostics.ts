@@ -20,7 +20,25 @@ export interface MappedDiagnostics {
   dropped: RawDiagnostic[]
 }
 
-function lineStarts(text: string): number[] {
+/**
+ * Lines of a generated script as checkers count them, like TypeScript's `computeLineStarts`: `\r\n`,
+ * `\n`, a lone `\r`, U+2028 and U+2029 all end a line.
+ */
+function scriptLineStarts(text: string): number[] {
+  const starts = [0]
+  for (let i = 0; i < text.length; i++) {
+    const char = text.charCodeAt(i)
+    if (char === 13 && text.charCodeAt(i + 1) === 10) i++
+    if (char === 10 || char === 13 || char === 0x2028 || char === 0x2029) starts.push(i + 1)
+  }
+  return starts
+}
+
+/**
+ * Lines of a .vue file as vue-tsc prints them: only `\n` counts. TypeScript first sees the SFC as a
+ * copy blanked out except for its `\n` (Volar's leading offset), and keeps that copy's line map.
+ */
+function sourceLineStarts(text: string): number[] {
   const starts = [0]
   for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) starts.push(i + 1)
   return starts
@@ -69,7 +87,7 @@ export function mapDiagnostics(raw: RawDiagnostic[], workspace: Workspace, gener
     const sourceText = workspace.sources.get(source)!
     if (!generated.has(diagnostic.file)) {
       const script = generate(source, sourceText)
-      generated.set(diagnostic.file, script && { ...script, starts: lineStarts(script.text) })
+      generated.set(diagnostic.file, script && { ...script, starts: scriptLineStarts(script.text) })
     }
     const script = generated.get(diagnostic.file)
     const offset = script && script.starts[diagnostic.line - 1]! + diagnostic.column - 1
@@ -79,7 +97,7 @@ export function mapDiagnostics(raw: RawDiagnostic[], workspace: Workspace, gener
       dropped.push(diagnostic)
       continue
     }
-    if (!sourceStarts.has(source)) sourceStarts.set(source, lineStarts(sourceText))
+    if (!sourceStarts.has(source)) sourceStarts.set(source, sourceLineStarts(sourceText))
     const [line, column] = toLineColumn(sourceStarts.get(source)!, sourceOffset)
     diagnostics.push({ ...diagnostic, file: source, line, column })
   }
