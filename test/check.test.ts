@@ -60,6 +60,24 @@ describe('line breaks other than \\n', () => {
   })
 })
 
+describe('SFCs outside the tsconfig include', () => {
+  const root = join(import.meta.dir, 'fixtures', 'outside-include')
+
+  // widgets/ is not included and a `*.vue` shim types any SFC; vue-tsc still checks the imported ones.
+  test('an SFC reached only through imports is checked, an unused one is not', async () => {
+    const result = await check({ project: join(root, 'tsconfig.json'), checker: 'tsc', cwd: root })
+    const files = [...new Set(result.diagnostics.map((diagnostic) => relative(root, diagnostic.file)))].toSorted()
+    expect(files).toEqual(['src/App.vue', 'widgets/Aliased.vue', 'widgets/Bad.vue', 'widgets/Deep.vue', 'widgets/Inner.vue'])
+  })
+
+  test.skipIf(!node)('reports exactly what vue-tsc reports', async () => {
+    const expected = vueTsc(root)
+    expect(expected.length).toBeGreaterThan(0)
+    const result = await check({ project: join(root, 'tsconfig.json'), checker: 'tsc', cwd: root })
+    expect(keys(result.diagnostics, root)).toEqual(keys(expected, root))
+  })
+})
+
 describe('cache', () => {
   const copy = join(repoRoot, '.tmp', `cache-${crypto.randomUUID()}`)
   afterAll(() => rm(copy, { recursive: true, force: true }))

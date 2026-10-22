@@ -5,7 +5,8 @@ Type-check Vue SFCs with **TypeScript 7**: `tsc` 7 or `bun check`.
 TypeScript 7 has no JS API, so `vue-tsc` cannot run on it, and Vue Language Tools' replacement (content
 mappers) needs TypeScript 7.1. `vue-typecheck` gets the same result today:
 
-1. every SFC is turned into the TypeScript that `vue-tsc` checks, by the official
+1. every SFC of the program, included by the tsconfig or imported, is turned into the TypeScript that
+   `vue-tsc` checks, by the official
    [`@vue/language-core`](https://github.com/vuejs/language-tools/tree/master/packages/language-core)
    codegen (TypeScript 6's JS API is loaded only to parse `<script>` blocks for it);
 2. the generated scripts are written to `node_modules/.cache/vue-typecheck`, next to a generated

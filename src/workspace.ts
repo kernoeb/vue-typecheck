@@ -2,6 +2,7 @@ import { cp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 
 import type { Generate, GeneratedScript } from './codegen'
+import { createImportResolver } from './imports'
 import { readVersion } from './package-json'
 import { type Project, TYPES_PACKAGE } from './project'
 import { findSyntaxProblems, type SyntaxProblem } from './syntax'
@@ -29,6 +30,8 @@ interface ManifestEntry {
   hash: string
   /** Set when the generated script did not parse: the cached file is then a declaration stub. */
   problem?: SyntaxProblem
+  /** What the script imports that may lead to more SFCs (see ImportResolver.specifiers). */
+  imports?: string[]
 }
 
 interface Manifest {
@@ -70,7 +73,8 @@ function parseEntry(value: unknown): ManifestEntry | undefined {
   if (typeof value.source !== 'string' || typeof value.hash !== 'string') return undefined
   const problem = 'problem' in value ? parseProblem(value.problem) : undefined
   if ('problem' in value && !problem) return undefined
-  return problem ? { source: value.source, hash: value.hash, problem } : { source: value.source, hash: value.hash }
+  const imports = 'imports' in value && Array.isArray(value.imports) ? value.imports.filter((specifier) => typeof specifier === 'string') : undefined
+  return { source: value.source, hash: value.hash, ...(problem && { problem }), ...(imports && { imports }) }
 }
 
 /** The manifest is our own cache file, but a cache from another version or a broken write is just empty. */
@@ -119,36 +123,64 @@ export async function prepareWorkspace(project: Project, generate: Generate): Pr
 
   const manifest: Manifest = { key, files: {} }
   const sources = new Map<string, string>()
-  const fresh = new Map<string, { source: string; hash: string; script: GeneratedScript }>()
-  await Promise.all(
-    project.vueFiles.map(async (source) => {
-      const text = await Bun.file(source).text()
-      sources.set(source, text)
-      const hash = Bun.hash(text).toString(36)
-      const cached = cachedBySource.get(source)
-      if (cached?.hash === hash && (await Bun.file(cached.target).exists())) {
-        manifest.files[cached.target] = { source, hash, ...(cached.problem && { problem: cached.problem }) }
-        return
+  const fresh = new Map<string, { source: string; hash: string; script: GeneratedScript; imports: string[] }>()
+  const resolver = createImportResolver(project)
+  /** Reads an SFC and generates its script unless cached; returns what the script imports. */
+  const prepareSfc = async (source: string): Promise<[string, string[]]> => {
+    const text = await Bun.file(source).text()
+    sources.set(source, text)
+    const hash = Bun.hash(text).toString(36)
+    const cached = cachedBySource.get(source)
+    if (cached?.hash === hash && cached.imports && (await Bun.file(cached.target).exists())) {
+      const { target, ...entry } = cached
+      manifest.files[target] = entry
+      return [source, cached.imports]
+    }
+    const script = generate(source, text)
+    if (!script) return [source, []]
+    const imports = resolver.specifiers(script.text)
+    fresh.set(mirror(source) + script.extension, { source, hash, script, imports })
+    return [source, imports]
+  }
+
+  // vue-tsc checks every SFC in the program, so also the ones only reachable through imports.
+  const nodeModules = sep + 'node_modules' + sep
+  const mirrorable = (path: string) => isUnder(path, project.root) && !path.includes(nodeModules)
+  const isVue = (file: string) => project.vueOptions.extensions.some((extension) => file.endsWith(extension))
+  const seen = new Set(project.fileNames)
+  let sfcs = project.vueFiles
+  let files = project.fileNames.filter((file) => !isVue(file) && mirrorable(file))
+  while (sfcs.length + files.length > 0) {
+    const imports = await Promise.all([
+      ...sfcs.map(prepareSfc),
+      ...files.map(async (file) => [file, resolver.specifiers(await Bun.file(file).text())] as const),
+    ])
+    sfcs = []
+    files = []
+    for (const [file, specifiers] of imports) {
+      for (const target of resolver.resolve(file, specifiers)) {
+        if (seen.has(target)) continue
+        seen.add(target)
+        if (isVue(target)) sfcs.push(target)
+        else files.push(target)
       }
-      const script = generate(source, text)
-      if (script) fresh.set(mirror(source) + script.extension, { source, hash, script })
-    }),
-  )
+    }
+  }
 
   const problems = findSyntaxProblems(new Map([...fresh].map(([target, { script }]) => [target, script.text])))
   await Promise.all(
-    [...fresh].map(async ([target, { source, hash, script }]) => {
+    [...fresh].map(async ([target, { source, hash, script, imports }]) => {
       await mkdir(dirname(target), { recursive: true })
       const stub = mirror(source) + '.d.ts'
       const problem = problems.get(target)
       if (problem) {
         await rm(target, { force: true })
         await writeFile(stub, STUB)
-        manifest.files[stub] = { source, hash, problem }
+        manifest.files[stub] = { source, hash, problem, imports }
       } else {
         await rm(stub, { force: true })
         await writeFile(target, script.text)
-        manifest.files[target] = { source, hash }
+        manifest.files[target] = { source, hash, imports }
       }
     }),
   )
@@ -165,15 +197,12 @@ export async function prepareWorkspace(project: Project, generate: Generate): Pr
     await writeFile(join(typesDir, 'package.json'), JSON.stringify({ name: TYPES_PACKAGE, private: true }))
   }
 
-  const nodeModules = sep + 'node_modules' + sep
-  const mirrorable = (path: string) => isUnder(path, project.root) && !path.includes(nodeModules)
   const paths: Record<string, string[]> = {}
   for (const [pattern, targets] of Object.entries(project.paths)) {
     paths[pattern] = [...targets, ...targets.filter(mirrorable).map(mirror)]
   }
   const baseRootDirs = project.compilerOptions.rootDirs ?? []
   const rootDirs = [...new Set([...baseRootDirs, project.root, ...baseRootDirs.filter(mirrorable).map(mirror), cacheDir])]
-  const isVue = new Set(project.vueFiles)
   const configPath = join(cacheDir, 'tsconfig.json')
   await mkdir(cacheDir, { recursive: true })
   await writeFile(
@@ -182,7 +211,7 @@ export async function prepareWorkspace(project: Project, generate: Generate): Pr
       {
         extends: project.configPath,
         compilerOptions: { rootDirs, paths },
-        files: [...project.fileNames.filter((file) => !isVue.has(file) && !file.endsWith('.vue')), ...Object.keys(manifest.files)],
+        files: [...project.fileNames.filter((file) => !isVue(file) && !file.endsWith('.vue')), ...Object.keys(manifest.files)],
         include: [],
       },
       null,

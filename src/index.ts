@@ -90,7 +90,7 @@ export async function check(options: CheckOptions): Promise<CheckResult> {
     dropped,
     unparseable: await unparseableAfterCheck(dropped, workspace),
     incomplete: run.incomplete,
-    sfcs: project.vueFiles.length,
+    sfcs: workspace.sources.size,
     regenerated: workspace.regenerated,
     timings: { prepare: prepareMs, check: run.ms, map: performance.now() - mark },
   }
